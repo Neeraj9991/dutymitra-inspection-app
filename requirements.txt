@@ -1,0 +1,7 @@
+streamlit
+pandas
+docxtpl
+python-docx
+requests
+openpyxl
+numpy
