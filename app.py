@@ -5,10 +5,13 @@ from io import BytesIO
 import zipfile
 import requests
 from pathlib import Path
+import tempfile
+import os
 
 from docxtpl import DocxTemplate, InlineImage
 from docx.shared import Inches
 from docx.image.exceptions import UnrecognizedImageError
+from docx2pdf import convert
 
 
 # ---------- GOOGLE SHEET CSV LOADER ----------
@@ -184,7 +187,7 @@ def main():
         layout="wide"
     )
 
-    st.title("Night Check Report Generator")
+    st.title("Night Check Report Generator (PDF)")
 
     # Sidebar: Google Sheet settings
     st.sidebar.header("Google Sheet Settings")
@@ -216,9 +219,6 @@ def main():
         return
 
     df = st.session_state["df"]
-
-    st.subheader("Raw Data")
-    st.dataframe(df)
 
     # Validate Date_parsed column
     if "Date_parsed" not in df.columns:
@@ -256,25 +256,53 @@ def main():
             zip_buffer = BytesIO()
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
                 for idx, row in df_date.iterrows():
+
+                    # 1. Generate DOCX in memory
                     docx_buf = render_docx_for_row(row, template_path)
 
+                    # 2. Save temporary DOCX
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_docx:
+                        tmp_docx.write(docx_buf.getvalue())
+                        tmp_docx_path = tmp_docx.name
+
+                    # 3. Convert DOCX → PDF
+                    tmp_pdf_path = tmp_docx_path.replace(".docx", ".pdf")
+                    convert(tmp_docx_path, tmp_pdf_path)
+
+                    # 4. Load PDF bytes
+                    with open(tmp_pdf_path, "rb") as pdf_file:
+                        pdf_bytes = pdf_file.read()
+
+                    # 5. Build filename
                     zone, unit_code, sitename = parse_site_name(row.get("Site Name", "Site"))
                     site_slug = (sitename or "Site").replace(" ", "_")
                     time_val = str(row.get("Time", "")).strip()
                     time_slug = time_val.replace(":", "").replace(" ", "_") if time_val else str(idx)
 
-                    filename = f"{selected_date}_{zone}-{unit_code}_{site_slug}_{time_slug}.docx"
-                    zipf.writestr(filename, docx_buf.getvalue())
+                    filename = f"{selected_date}_{site_slug}.pdf"
+
+                    # 6. Add to ZIP
+                    zipf.writestr(filename, pdf_bytes)
+
+                    # 7. Cleanup temp files
+                    try:
+                        os.remove(tmp_docx_path)
+                    except OSError:
+                        pass
+                    try:
+                        os.remove(tmp_pdf_path)
+                    except OSError:
+                        pass
 
             zip_buffer.seek(0)
             st.download_button(
-                "⬇️ Download ZIP",
+                "⬇️ Download ZIP (PDF)",
                 data=zip_buffer,
                 file_name=f"night_checks_{selected_date}.zip",
                 mime="application/zip"
             )
         except Exception as e:
-            st.error("Error generating DOCX/ZIP:")
+            st.error("Error generating PDF ZIP:")
             st.exception(e)
 
 

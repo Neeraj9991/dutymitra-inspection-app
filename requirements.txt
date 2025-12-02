@@ -5,3 +5,4 @@ python-docx
 requests
 openpyxl
 numpy
+docx2pdf
